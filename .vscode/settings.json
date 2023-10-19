@@ -1,0 +1,8 @@
+{
+    "ros.distro": "humble",
+    "files.associations": {
+        "*.c": "c",
+        "defs.h": "c",
+        "sysinfo.h": "c"
+    }
+}
