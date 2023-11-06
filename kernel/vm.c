@@ -501,7 +501,7 @@ vmprint(pagetable_t pagetable, int depth) {
 }
 
 int
-kvm_copy_mapping(pagetable_t dst, pagetable_t src, uint64 start , uint64 sz) {
+kvmcopymappings(pagetable_t src, pagetable_t dst, uint64 start , uint64 sz) {
   pte_t* pte;
   uint64 pa, i;
   uint flags;
