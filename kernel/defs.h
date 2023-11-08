@@ -178,15 +178,11 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
-int             vmprint(pagetable_t, int);
-pagetable_t     kvminit_newpgtbl(void);
-void            kvm_free_kernelpgtbl(pagetable_t);
-int             kvmcopymappings(pagetable_t, pagetable_t, uint64, uint64);
+void            vmprint(pagetable_t pagetable, int depth);
+void            kvm_free_mapping(pagetable_t);
+pagetable_t     kvm_map_kernalpagetable();
+int             kvm_copy_mapping(pagetable_t, pagetable_t, int, int);
 uint64          kvmdealloc(pagetable_t, uint64, uint64);
-
-// vmcopyin.c
-int copyin_new(pagetable_t, char *, uint64, uint64);
-int copyinstr_new(pagetable_t, char *, uint64, uint64);
 
 // plic.c
 void            plicinit(void);
@@ -210,6 +206,10 @@ void            statsinc(void);
 
 // sprintf.c
 int             snprintf(char*, int, char*, ...);
+
+// vmcopyin.c
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
 
 #ifdef LAB_NET
 // pci.c

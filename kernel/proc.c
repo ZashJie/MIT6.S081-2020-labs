@@ -34,11 +34,9 @@ procinit(void)
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-
       // char *pa = kalloc();
       // if(pa == 0)
       //   panic("kalloc");
-      
       // uint64 va = KSTACK((int) (p - proc));
       // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       // p->kstack = va;
@@ -123,14 +121,13 @@ found:
     return 0;
   }
 
-  p->kernelpgtbl = kvminit_newpgtbl();
-
-  char* pa = kalloc();
+  char *pa = kalloc();
   if (pa == 0) {
     panic("kalloc");
   }
-  uint64 va = KSTACK((int) 0);
-  kvmmap(p->kernelpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  uint64 va = KSTACK(0);
+  p->kernel_pagetable = kvm_map_kernalpagetable();
+  kvmmap(p->kernel_pagetable, va, (uint64)pa, PGSIZE, PTE_R|PTE_W);
   p->kstack = va;
 
   // Set up new context to start executing at forkret,
@@ -161,13 +158,12 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
-
-  void* kstack = (void *)kvmpa(p->kernelpgtbl, p->kstack);
-  kfree(kstack);
+  
+  kfree((void*)kvmpa(p->kernel_pagetable, p->kstack));
   p->kstack = 0;
+  kvm_free_mapping(p->kernel_pagetable);
+  p->kernel_pagetable = 0;
 
-  kvm_free_kernelpgtbl(p->kernelpgtbl);
-  p->kernelpgtbl = 0;
   p->state = UNUSED;
 }
 
@@ -240,8 +236,7 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
-  kvmcopymappings(p->pagetable, p->kernelpgtbl, 0, p->sz);
-
+  kvm_copy_mapping(p->pagetable, p->kernel_pagetable, 0, p->sz);
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -264,18 +259,17 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
-    uint64 newsz;
-    if((newsz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    int sz1;
+    if((sz1 = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
-    if (kvmcopymappings(p->pagetable, p->kernelpgtbl, sz, n) < 0) {
-      uvmdealloc(p->pagetable, newsz, sz);
+    if (kvm_copy_mapping(p->pagetable, p->kernel_pagetable, sz, sz + n)) {
       return -1;
     }
-    sz = newsz;
+    sz = sz1;
   } else if(n < 0){
     uvmdealloc(p->pagetable, sz, sz + n);
-    sz = kvmdealloc(p->kernelpgtbl, sz, sz + n);
+    sz = kvmdealloc(p->kernel_pagetable, sz, sz + n);
   }
   p->sz = sz;
   return 0;
@@ -296,7 +290,8 @@ fork(void)
   }
 
   // Copy user memory from parent to child.
-  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 || kvmcopymappings(np->pagetable, np->kernelpgtbl, 0, p->sz) < 0){
+  if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0 ||
+    kvm_copy_mapping(np->pagetable, np->kernel_pagetable, 0, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
@@ -502,13 +497,12 @@ scheduler(void)
         p->state = RUNNING;
         c->proc = p;
 
-        w_satp(MAKE_SATP(p->kernelpgtbl));
+        w_satp(MAKE_SATP(p->kernel_pagetable));
         sfence_vma();
 
         swtch(&c->context, &p->context);
 
         kvminithart();
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
