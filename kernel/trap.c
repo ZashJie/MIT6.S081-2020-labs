@@ -77,9 +77,22 @@ usertrap(void)
     exit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
-    yield();
+  if(which_dev == 2) {
+    if (p->timer_interval) {
+      if (--p->timer_ticks <= 0) {
+        if (!p->timer_goingonoff) {
+          p->timer_ticks = p->timer_interval;
+          *p->timer_trapframe = *p->trapframe;
+          p->trapframe->epc = (uint64)p->timer_function;  
+          p->timer_goingonoff = 1;
 
+        }
+      }
+    }
+    
+    yield();
+  }
+  
   usertrapret();
 }
 
@@ -218,3 +231,18 @@ devintr()
   }
 }
 
+int sigalarm(int ticks, void (*handler)()) {
+  struct proc *p = myproc();
+  p->timer_ticks = ticks;
+  p->timer_interval = ticks;
+  p->timer_function = handler;
+  return 0;
+}
+
+int sigreturn(void) {
+  struct proc *p = myproc();
+  *p->trapframe = *p->timer_trapframe;
+  p->timer_goingonoff = 0;
+  p->timer_function = 0;
+  return 0;
+}
