@@ -29,6 +29,33 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+int uvmshouldtouch(uint64 va) {
+  pte_t *pte;
+  struct proc *p = myproc();
+  
+  return va < p->sz // within size of memory for the process
+    && PGROUNDDOWN(va) != r_sp() // not accessing stack guard page (it shouldn't be mapped)
+    && (((pte = walk(p->pagetable, va, 0))==0) || ((*pte & PTE_V)==0)); // page table entry does not exist
+}
+
+void uvmlazytouch(uint64 va) {
+  struct proc* p = myproc();
+  
+  uint64 mem = (uint64)kalloc();
+
+  if (mem == 0) {
+    p->killed = 1;
+    printf("lazy alloc: out of memory");
+  } else {
+    memset((void *)mem, 0, PGSIZE);
+    if (mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, PTE_R|PTE_W|PTE_U|PTE_X) != 0) {
+      printf("lazy alloc: fail to map page.");
+      kfree((void*)mem);
+      p->killed = 1;
+    }
+  }
+}
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -67,6 +94,8 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if ((r_scause() == 15 || r_scause() == 13) && uvmshouldtouch(r_stval())) {
+    uvmlazytouch(r_stval());
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
