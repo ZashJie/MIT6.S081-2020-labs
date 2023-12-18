@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -335,6 +337,79 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return -1;
 }
 
+int
+uvmcowlazycopy(pagetable_t old, pagetable_t new, uint64 sz) {
+  pte_t *pte;
+  uint64 pa, i;
+  uint flags;
+
+  for (i = 0; i < sz; i += PGSIZE) {
+    if ((pte = walk(old, i, 0)) == 0)
+      panic("uvmlazycopy: pte should exist");
+    if ((*pte & PTE_V) == 0)
+      panic("uvmlazycopy: page not present");
+    pa = PTE2PA(*pte);
+    if (*pte & PTE_W) {
+      *pte = (*pte & ~PTE_W) | PTE_RSW;
+    }
+    
+    flags = PTE_FLAGS(*pte);
+    
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      goto err;
+    }
+    increace_ref((void*) pa);
+  }
+  return 0;
+
+ err:
+  uvmunmap(new, 0, i / PGSIZE, 1);
+  return -1;
+}
+
+int
+uvmcowrealcopy(uint64 va) {
+
+  pte_t *pte;
+  uint64 pa;
+  struct proc *p = myproc();
+  uint64 mem;
+  uint flag;
+
+
+  if ((pte = walk(p->pagetable, va, 0)) == 0) {
+    vmprint(p->pagetable, 0);
+    panic("uvmcowrealcopy: pte should exist");
+  }
+  pa = PTE2PA(*pte);
+  // if (inspectPaRef(pa) == 1) {
+  //   mem = pa;
+  // } else {
+  mem = (uint64)cow_copy((void*) pa);
+  // }
+  if (mem == 0) return -1;
+
+  flag = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_RSW;
+  uvmunmap(p->pagetable, PGROUNDDOWN(va), 1, 0);
+
+  if (mappages(p->pagetable, va, 1, mem, flag) == -1) 
+    panic("uvmcowrealcopy: mappages");
+  
+  return 0;
+}
+
+int
+inspectpte(uint64 va) {
+  pte_t *pte;
+  struct proc *p = myproc();
+
+  return va < p->sz &&
+  ((pte = walk(p->pagetable, va, 0)) != 0) &&
+  (*pte & PTE_RSW) && 
+  (*pte & PTE_V);
+}
+
+
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void
@@ -357,6 +432,10 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   uint64 n, va0, pa0;
 
   while(len > 0){
+    if (inspectpte(dstva)) {
+      uvmcowrealcopy(dstva);
+    }
+
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
@@ -438,5 +517,26 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return 0;
   } else {
     return -1;
+  }
+}
+
+void
+vmprint(pagetable_t pagetable, int depth) {
+  if (depth >= 3) return;
+  if (depth == 0)
+    printf("page table %p\n", pagetable);
+  for (int i = 0; i < 512; i++) {
+    int d = depth;
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V) {
+      while (d--) {
+        printf(".. ");
+      }
+      uint64 child = PTE2PA(pte);
+      uint flags = PTE_FLAGS(pte);
+      printf("..%d: pte %p pa %p flags %p\n", i, pte, child, flags);
+
+      vmprint((pagetable_t)child, depth + 1);
+    }
   }
 }

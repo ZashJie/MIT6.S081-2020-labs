@@ -9,6 +9,12 @@
 #include "riscv.h"
 #include "defs.h"
 
+struct spinlock pgreflock;
+#define paNum(pa) ((pa - KERNBASE)/PGSIZE)
+#define PG_MAX_NUM paNum(PHYSTOP)
+int paref_ID[PG_MAX_NUM];
+#define PA_REF(pa) paref_ID[paNum((uint64)pa)]
+
 void freerange(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
@@ -21,12 +27,14 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  int cnt;
 } kmem;
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&pgreflock, "pgref");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -50,16 +58,19 @@ kfree(void *pa)
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+  acquire(&pgreflock);
+  if (--PA_REF(pa) <= 0) {
+    // Fill with junk to catch dangling refs.
+    memset(pa, 1, PGSIZE);
 
-  // Fill with junk to catch dangling refs.
-  memset(pa, 1, PGSIZE);
+    r = (struct run*)pa;
 
-  r = (struct run*)pa;
-
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+    acquire(&kmem.lock);
+    r->next = kmem.freelist;
+    kmem.freelist = r;
+    release(&kmem.lock);
+  }
+  release(&pgreflock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -76,7 +87,42 @@ kalloc(void)
     kmem.freelist = r->next;
   release(&kmem.lock);
 
-  if(r)
+  if(r) {
     memset((char*)r, 5, PGSIZE); // fill with junk
+    PA_REF(r) = 1;
+  }
   return (void*)r;
+}
+
+void*
+cow_copy(void* pa)
+{
+  uint64 mem;
+  acquire(&pgreflock);
+  if (PA_REF(pa) <= 1) {
+    release(&pgreflock);
+    return pa;
+  }
+  mem = (uint64)kalloc();
+  if (mem == 0) {
+    release(&pgreflock);
+    return 0;
+  }
+  memmove((void*)mem, pa, PGSIZE);
+  PA_REF(pa) -= 1;
+  release(&pgreflock);
+  return (void*)mem;
+
+  acquire(&pgreflock);
+}
+
+int inspectPaRef(uint64 pa) {
+  return PA_REF(pa);
+}
+
+void
+increace_ref(void* pa) {
+  acquire(&pgreflock);
+  PA_REF(pa)++;
+  release(&pgreflock);
 }
