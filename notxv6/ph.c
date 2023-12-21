@@ -8,6 +8,8 @@
 #define NBUCKET 5
 #define NKEYS 100000
 
+pthread_mutex_t lock;
+
 struct entry {
   int key;
   int value;
@@ -46,6 +48,7 @@ void put(int key, int value)
     if (e->key == key)
       break;
   }
+  pthread_mutex_lock(&lock);
   if(e){
     // update the existing key.
     e->value = value;
@@ -53,6 +56,7 @@ void put(int key, int value)
     // the new is new.
     insert(key, value, &table[i], table[i]);
   }
+  pthread_mutex_unlock(&lock);
 }
 
 static struct entry*
@@ -75,10 +79,12 @@ put_thread(void *xa)
   int n = (int) (long) xa; // thread number
   int b = NKEYS/nthread;
 
+  printf("n: %d, b: %d\n", n, b);
+
   for (int i = 0; i < b; i++) {
     put(keys[b*n + i], n);
   }
-
+  printf("max: %d\n", b*n);
   return NULL;
 }
 
@@ -88,10 +94,12 @@ get_thread(void *xa)
   int n = (int) (long) xa; // thread number
   int missing = 0;
 
+  pthread_mutex_lock(&lock);
   for (int i = 0; i < NKEYS; i++) {
     struct entry *e = get(keys[i]);
     if (e == 0) missing++;
   }
+  pthread_mutex_unlock(&lock);
   printf("%d: %d keys missing\n", n, missing);
   return NULL;
 }
@@ -102,6 +110,7 @@ main(int argc, char *argv[])
   pthread_t *tha;
   void *value;
   double t1, t0;
+  pthread_mutex_init(&lock, NULL);
 
   if (argc < 2) {
     fprintf(stderr, "Usage: %s nthreads\n", argv[0]);
