@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "*.c": "c",
+        "atomic": "c",
+        "sstream": "c",
+        "spinlock.h": "c",
+        "stat.h": "c",
+        "functional": "c"
+    }
+}
