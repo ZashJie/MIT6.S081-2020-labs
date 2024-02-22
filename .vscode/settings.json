@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.c": "c",
+        "fcntl.h": "c"
+    },
+    "ros.distro": "humble"
+}
